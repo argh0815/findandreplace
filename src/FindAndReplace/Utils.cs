@@ -144,6 +144,15 @@ namespace FindAndReplace
 		                                                                           bool isReplace = false)
 		{
 			var separator = Environment.NewLine;
+			int separatorLength = 2;
+			
+			/* Change separator from "\r\n" to "\n" for Unix files, otherwise Preview not working correctly. Also added separatorLength as parameter for DetectMatchLine */
+			if (!fileContent.Contains("\r\n"))
+			{
+				separator = "\n";
+				separatorLength = 1;
+			}
+				
 			var lines = fileContent.Split(new string[] {separator}, StringSplitOptions.None);
 
 			var temp = new List<MatchPreviewLineNumber>();
@@ -152,9 +161,9 @@ namespace FindAndReplace
 
 			foreach (LiteMatch match in matches)
 			{
-				var lineIndexStart = DetectMatchLine(lines.ToArray(), GetMatchIndex(match.Index, replacedTextLength, isReplace));
+				var lineIndexStart = DetectMatchLine(lines.ToArray(), GetMatchIndex(match.Index, replacedTextLength, isReplace), separatorLength);
 				var lineIndexEnd = DetectMatchLine(lines.ToArray(),
-				                                   GetMatchIndex(match.Index + replaceStrLength, replacedTextLength, isReplace));
+				                                   GetMatchIndex(match.Index + replaceStrLength, replacedTextLength, isReplace), separatorLength);
 
 				replacedTextLength += match.Length;
 
@@ -212,9 +221,8 @@ namespace FindAndReplace
 			return result;
 		}
 
-		private static int DetectMatchLine(string[] lines, int position)
+		private static int DetectMatchLine(string[] lines, int position, int separatorLength)
 		{
-			var separatorLength = 2;
 			int i = 0;
 			int charsCount = lines[0].Length + separatorLength;
 

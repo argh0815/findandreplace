@@ -31,8 +31,16 @@ namespace FindAndReplace
             [DebuggerStepThrough]
             public static void IsNotEmpty(string argument, string argumentName)
             {
+                /* Allow "spaces only" as search parameter */
+                if (string.IsNullOrEmpty(argument) && argumentName == "FindText")
+                    throw new ArgumentException(argumentName + " cannot be empty.", argumentName);
+                if (string.IsNullOrEmpty((argument ?? string.Empty).Trim()) && argumentName != "FindText")
+                    throw new ArgumentException(argumentName + " cannot be empty.", argumentName);
+
+                /* Original version didn't allow "spaces only" as search parameter due to trim -> revised as per above
                 if (string.IsNullOrEmpty((argument ?? string.Empty).Trim()))
                     throw new ArgumentException(argumentName + " cannot be empty.", argumentName);
+                */
             }
 
             [DebuggerStepThrough]

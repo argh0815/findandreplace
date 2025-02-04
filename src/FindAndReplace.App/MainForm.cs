@@ -24,6 +24,7 @@ namespace FindAndReplace.App
 		public bool _isFindOnly;
 		private FormData _lastOperationFormData;
 
+		public int customScaling = 100;
 
 		private delegate void SetFindResultCallback(Finder.FindResultItem resultItem, Stats stats, Status status);
 
@@ -32,9 +33,22 @@ namespace FindAndReplace.App
 		public MainForm()
 		{
 			InitializeComponent();
-		    this.Text = this.Text + " (v" + Application.ProductVersion + ")";
+			/* No need to show version in the title bar ...
+			this.Text = this.Text + " (v" + Application.ProductVersion + ")";
+			*/
+			/* Hack to address improper scaling of a button when using custom scaling of 120% in Windows. The scaling factor is stored as 115 in the registry. */
+			if ((int)Microsoft.Win32.Registry.GetValue("HKEY_CURRENT_USER\\Control Panel\\Desktop\\WindowMetrics", "AppliedDPI", 0) == 115)
+			{
+				SizeF scale = this.AutoScaleFactor;
+				Size desiredSize = new Size(34, 24);
+				SizeF calculatedSize = new SizeF(desiredSize.Width * scale.Width, desiredSize.Height * scale.Height);
+				this.btnSelectDir.MaximumSize = calculatedSize.ToSize();
+				this.btnSelectDir.MinimumSize = calculatedSize.ToSize();
+				this.btnSelectDir.Size = calculatedSize.ToSize();
+				/* Used to adjust column widths */
+				customScaling = 130;
+			}
 		}
-
 
 		protected override void OnLoad(EventArgs e)
 		{
@@ -43,6 +57,17 @@ namespace FindAndReplace.App
 			//Fix from: http://stackoverflow.com/questions/3421453/c-why-is-text-in-textbox-highlighted-selected-when-form-is-displayed
 			this.txtDir.SelectionStart = this.txtDir.Text.Length;
 			this.txtDir.DeselectAll();
+		}
+
+		protected override bool ProcessDialogKey(Keys keyData)
+		{
+			/* To close the program by pressing Esc key */
+			if (Form.ModifierKeys == Keys.None && keyData == Keys.Escape)
+			{
+				this.Close();
+				return true;
+			}
+			return base.ProcessDialogKey(keyData);
 		}
 
 		private void MainForm_FormClosed(object sender, FormClosedEventArgs e)
@@ -60,7 +85,8 @@ namespace FindAndReplace.App
 
 			PrepareFinderGrid();
 
-			lblStats.Text = "";
+			/* Show Stats in any case */
+			/* lblStats.Text = ""; */
 			lblStatus.Text = "Getting file list...";
 
 			var finder = GetFinder();
@@ -68,8 +94,10 @@ namespace FindAndReplace.App
 			CreateListener(finder);
 
 			ShowResultPanel();
-		    txtMatchesPreview.Clear();
-            SaveToRegistry();
+
+			InitializeTxtMatchesPreview();
+
+			SaveToRegistry();
 
 			_currentThread = new Thread(DoFindWork);
 			_currentThread.IsBackground = true;
@@ -87,23 +115,51 @@ namespace FindAndReplace.App
 			data.IncludeSubDirectories = chkIncludeSubDirectories.Checked;
 			data.FileMask = txtFileMask.Text;
 			data.ExcludeFileMask = txtExcludeFileMask.Text;
+			/* Hack to avoid weird data being written to config file */
+			if (string.IsNullOrWhiteSpace(txtExcludeFileMask.Text))
+				data.ExcludeFileMask = "";
 			data.FindText = CleanRichBoxText(txtFind.Text);
+			if (string.IsNullOrWhiteSpace(txtFind.Text))
+				data.FindText = "";
 			data.IsCaseSensitive = chkIsCaseSensitive.Checked;
 			data.IsRegEx = chkIsRegEx.Checked;
 			data.SkipBinaryFileDetection = chkSkipBinaryFileDetection.Checked;
 			data.IncludeFilesWithoutMatches = chkIncludeFilesWithoutMatches.Checked;
 			data.ShowEncoding = chkShowEncoding.Checked;
 			data.ReplaceText = CleanRichBoxText(txtReplace.Text);
+			if (string.IsNullOrWhiteSpace(txtReplace.Text))
+				data.ReplaceText = "";
 			data.UseEscapeChars = chkUseEscapeChars.Checked;
 			data.Encoding = cmbEncoding.Text;
-		    data.ExcludeDir = txtExcludeDir.Text;
-		    data.IsKeepModifiedDate = chkKeepModifiedDate.Checked;
+			data.ExcludeDir = txtExcludeDir.Text;
+			if (string.IsNullOrWhiteSpace(txtExcludeDir.Text))
+				data.ExcludeDir = "";
+			data.IsKeepModifiedDate = chkKeepModifiedDate.Checked;
 
-            data.SaveSetting();
+			data.SaveSetting();
 
 			_lastOperationFormData = data;
 		}
 
+		private void InitializeTxtMatchesPreview()
+		{
+			txtMatchesPreview.Clear();
+			/* Hack to properly reinitialize Preview Panel scrollbar. Without it, the scrollbar is greyed out after subsequent find/replace actions */
+			var scrollBarOldValue = txtMatchesPreview.ScrollBars;
+			txtMatchesPreview.ScrollBars = RichTextBoxScrollBars.None;
+			txtMatchesPreview.ScrollBars = scrollBarOldValue;
+
+			/* Reduce tab size in Preview Panel to 10 pixels to improve readability. Maximum array size for SelectionTabs seems to be 32 */
+			txtMatchesPreview.SelectAll();
+			txtMatchesPreview.SelectionTabs = new int[32];
+			int[] tabStops = new int[32];
+			for (int tabStopsIndex = 0; tabStopsIndex < 32; tabStopsIndex++)
+			{
+				tabStops[tabStopsIndex] = 10 + tabStopsIndex * 10;
+			}
+			txtMatchesPreview.SelectionTabs = tabStops;
+			txtMatchesPreview.Select(0, 0);
+		}
 
 		private void PrepareFinderGrid()
 		{
@@ -112,17 +168,25 @@ namespace FindAndReplace.App
 			gvResults.Rows.Clear();
 			gvResults.Columns.Clear();
 
-			AddResultsColumn("Filename", "Filename", 250);
-			AddResultsColumn("Path", "Path", 450);
+			/* Using int type for customScaling hence need to divide by 100. Alternatively, could use float type and Convert.ToInt32() function. */
+			AddResultsColumn("Filename", "Filename", 250 * customScaling / 100);
 
+			/* Shorten "Path" column width if "Show encoding" is selected */
 			if (chkShowEncoding.Checked)
-				AddResultsColumn("FileEncoding", "Encoding", 100);
+			{
+				AddResultsColumn("Path", "Path", (450 - 60) * customScaling / 100);
+				AddResultsColumn("FileEncoding", "Encoding", 60 * customScaling / 100);
+			}
+			else
+			{
+				AddResultsColumn("Path", "Path", 450 * customScaling / 100);
+			}
 
-			AddResultsColumn("NumMatches", "Matches", 55);
+			AddResultsColumn("NumMatches", "Matches", 60 * customScaling / 100);
 			AddResultsColumn("ErrorMessage", "Error", 150);
-            gvResults.Columns[gvResults.ColumnCount - 1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+			gvResults.Columns[gvResults.ColumnCount - 1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
-            gvResults.Columns.Add("MatchesPreview", "");
+			gvResults.Columns.Add("MatchesPreview", "");
 			gvResults.Columns[gvResults.ColumnCount - 1].Visible = false;
 
 			HideMatchesPreviewPanel();
@@ -133,13 +197,13 @@ namespace FindAndReplace.App
 		private void AddResultsColumn(string dataPropertyName, string headerText, int width)
 		{
 			gvResults.Columns.Add(new DataGridViewColumn()
-				{
-					DataPropertyName = dataPropertyName,
-					HeaderText = headerText,
-					CellTemplate = new DataGridViewTextBoxCell(),
-					Width = width,
-					SortMode = DataGridViewColumnSortMode.Automatic,
-				});
+			{
+				DataPropertyName = dataPropertyName,
+				HeaderText = headerText,
+				CellTemplate = new DataGridViewTextBoxCell(),
+				Width = width,
+				SortMode = DataGridViewColumnSortMode.Automatic,
+			});
 		}
 
 		private void CreateListener(Finder finder)
@@ -157,7 +221,7 @@ namespace FindAndReplace.App
 			else
 			{
 				SetFindResultCallback findResultCallback = ShowFindResult;
-				this.Invoke(findResultCallback, new object[] {e.ResultItem, e.Stats, e.Status});
+				this.Invoke(findResultCallback, new object[] { e.ResultItem, e.Stats, e.Status });
 			}
 		}
 
@@ -179,8 +243,8 @@ namespace FindAndReplace.App
 
 					if (_lastOperationFormData.ShowEncoding)
 						gvResults.Rows[currentRow].Cells[columnIndex++].Value = findResultItem.FileEncoding != null
-							                                                        ? findResultItem.FileEncoding.WebName
-							                                                        : String.Empty;
+																																				? findResultItem.FileEncoding.WebName
+																																				: String.Empty;
 
 					gvResults.Rows[currentRow].Cells[columnIndex++].Value = findResultItem.NumMatches;
 					gvResults.Rows[currentRow].Cells[columnIndex++].Value = findResultItem.ErrorMessage;
@@ -196,12 +260,11 @@ namespace FindAndReplace.App
 							fileContent = sr.ReadToEnd();
 						}
 
-
 						List<MatchPreviewLineNumber> lineNumbers = Utils.GetLineNumbersForMatchesPreview(fileContent,
-						                                                                                 findResultItem.Matches);
+																																														 findResultItem.Matches);
 						gvResults.Rows[currentRow].Cells[columnIndex].Value = GenerateMatchesPreviewText(fileContent,
-						                                                                                 lineNumbers.Select(
-							                                                                                 ln => ln.LineNumber).ToList());
+																																														 lineNumbers.Select(
+																																																 ln => ln.LineNumber).ToList());
 					}
 
 					//Grid likes to select the first row for some reason
@@ -214,20 +277,22 @@ namespace FindAndReplace.App
 				progressBar.Value = stats.Files.Processed;
 
 				lblStatus.Text = "Processing " + stats.Files.Processed + " of " + stats.Files.Total + " files.  Last file: " +
-				                 findResultItem.FileRelativePath;
+												 findResultItem.FileRelativePath;
 
 				ShowStats(stats);
 			}
 			else
 			{
-				HideResultPanel();
+				/* Show Result Panel even if no files found */
+				/* HideResultPanel(); */
 
-				txtNoMatches.Visible = true;
+				/* txtNoMatches.Visible = true; */
 
-				HideStats();
+				/* Show Stats even if no files found */
+				/* HideStats(); */
+
+				ShowStats(stats);
 			}
-
-
 
 			//When last file - enable buttons back
 			if (status == Status.Completed || status == Status.Cancelled)
@@ -267,15 +332,15 @@ namespace FindAndReplace.App
 
 		private void DoFindWork()
 		{
-		    try
-		    {
-		        _finder.Find();
-		    }
-		    catch (Exception e)
-		    {
-		        MessageBox.Show(e.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-		        OnFinderFileProcessed(this, new FinderEventArgs(new Finder.FindResultItem(), new Stats(), Status.Cancelled, _finder.IsSilent));
-		    }
+			try
+			{
+				_finder.Find();
+			}
+			catch (Exception e)
+			{
+				MessageBox.Show(e.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+				OnFinderFileProcessed(this, new FinderEventArgs(new Finder.FindResultItem(), new Stats(), Status.Cancelled, _finder.IsSilent));
+			}
 		}
 
 		private void ShowResultPanel()
@@ -355,7 +420,6 @@ namespace FindAndReplace.App
 			}
 		}
 
-
 		private bool _isFormValid = true;
 		private Control _firstInvalidControl = null;
 
@@ -421,20 +485,22 @@ namespace FindAndReplace.App
 			if (String.IsNullOrEmpty(txtReplace.Text))
 			{
 				DialogResult dlgResult = MessageBox.Show(this,
-				                                         "Are you sure you would like to replace with an empty string?",
-				                                         "Replace Confirmation",
-				                                         MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+																								 "Are you sure you would like to replace with an empty string?",
+																								 "Replace Confirmation",
+																								 MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 				if (dlgResult == DialogResult.No)
 					return;
 			}
 
 			ShowResultPanel();
 
-			lblStats.Text = "";
+			/* Show Stats in any case */
+			/* lblStats.Text = ""; */
 			lblStatus.Text = "Getting file list...";
 
 			PrepareReplacerGrid();
-			txtMatchesPreview.Clear();
+
+			InitializeTxtMatchesPreview();
 
 			var replacer = GetReplacer();
 
@@ -461,18 +527,26 @@ namespace FindAndReplace.App
 			gvResults.Rows.Clear();
 			gvResults.Columns.Clear();
 
-			AddResultsColumn("Filename", "Filename", 250);
-			AddResultsColumn("Path", "Path", 400);
+			/* Using int type for customScaling hence need to divide by 100. Alternatively, could use float type and Convert.ToInt32() function. */
+			AddResultsColumn("Filename", "Filename", 250 * customScaling / 100);
 
+			/* Shorten "Path" column width if "Show encoding" is selected */
 			if (chkShowEncoding.Checked)
-				AddResultsColumn("FileEncoding", "Encoding", 100);
+			{
+				AddResultsColumn("Path", "Path", (450 - 2 * 60) * customScaling / 100);
+				AddResultsColumn("FileEncoding", "Encoding", 60 * customScaling / 100);
+			}
+			else
+			{
+				AddResultsColumn("Path", "Path", (450 - 60) * customScaling / 100);
+			}
 
-			AddResultsColumn("NumMatches", "Matches", 50);
-			AddResultsColumn("IsSuccess", "Replaced", 60);
+			AddResultsColumn("NumMatches", "Matches", 60 * customScaling / 100);
+			AddResultsColumn("IsSuccess", "Replaced", 60 * customScaling / 100);
 			AddResultsColumn("ErrorMessage", "Error", 150);
-		    gvResults.Columns[gvResults.ColumnCount - 1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+			gvResults.Columns[gvResults.ColumnCount - 1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
-            gvResults.Columns.Add("MatchesPreview", "");
+			gvResults.Columns.Add("MatchesPreview", "");
 			gvResults.Columns[gvResults.ColumnCount - 1].Visible = false;
 
 			HideMatchesPreviewPanel();
@@ -481,16 +555,16 @@ namespace FindAndReplace.App
 
 		private void DoReplaceWork()
 		{
-		    try
-		    {
-		        _replacer.Replace();
-            }
-		    catch (Exception e)
-		    {
-		        MessageBox.Show(e.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-		        ReplaceFileProceed(this, new ReplacerEventArgs(new Replacer.ReplaceResultItem(), new Stats(), Status.Cancelled, _replacer.IsSilent));
-		    }
-        }
+			try
+			{
+				_replacer.Replace();
+			}
+			catch (Exception e)
+			{
+				MessageBox.Show(e.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+				ReplaceFileProceed(this, new ReplacerEventArgs(new Replacer.ReplaceResultItem(), new Stats(), Status.Cancelled, _replacer.IsSilent));
+			}
+		}
 
 		private void ShowReplaceResult(Replacer.ReplaceResultItem replaceResultItem, Stats stats, Status status)
 		{
@@ -510,8 +584,8 @@ namespace FindAndReplace.App
 
 					if (_lastOperationFormData.ShowEncoding)
 						gvResults.Rows[currentRow].Cells[columnIndex++].Value = replaceResultItem.FileEncoding != null
-							                                                        ? replaceResultItem.FileEncoding.WebName
-							                                                        : String.Empty;
+																																				? replaceResultItem.FileEncoding.WebName
+																																				: String.Empty;
 
 					gvResults.Rows[currentRow].Cells[columnIndex++].Value = replaceResultItem.NumMatches;
 					gvResults.Rows[currentRow].Cells[columnIndex++].Value = replaceResultItem.IsReplaced ? "Yes" : "No";
@@ -520,23 +594,22 @@ namespace FindAndReplace.App
 					gvResults.Rows[currentRow].Resizable = DataGridViewTriState.False;
 
 					if (replaceResultItem.IsSuccess && replaceResultItem.NumMatches > 0)
-						//Account for errors and IncludeFilesWithoutMatches
+					//Account for errors and IncludeFilesWithoutMatches
 					{
 						string fileContent = string.Empty;
 
-
-                        using (var sr = new StreamReader(replaceResultItem.FilePath, replaceResultItem.FileEncoding))
+						using (var sr = new StreamReader(replaceResultItem.FilePath, replaceResultItem.FileEncoding))
 						{
 							fileContent = sr.ReadToEnd();
 						}
 
 						List<MatchPreviewLineNumber> lineNumbers = Utils.GetLineNumbersForMatchesPreview(fileContent,
-						                                                                                 replaceResultItem.Matches,
-						                                                                                 _lastOperationFormData
-							                                                                                 .ReplaceText.Length, true);
+																																														 replaceResultItem.Matches,
+																																														 _lastOperationFormData
+																																																 .ReplaceText.Length, true);
 						gvResults.Rows[currentRow].Cells[columnIndex].Value = GenerateMatchesPreviewText(fileContent,
-						                                                                                 lineNumbers.Select(
-							                                                                                 ln => ln.LineNumber).ToList());
+																																														 lineNumbers.Select(
+																																																 ln => ln.LineNumber).ToList());
 					}
 
 					//Grid likes to select the first row for some reason
@@ -548,20 +621,22 @@ namespace FindAndReplace.App
 				progressBar.Value = stats.Files.Processed;
 
 				lblStatus.Text = "Processing " + stats.Files.Processed + " of " + stats.Files.Total + " files.  Last file: " +
-				                 replaceResultItem.FileRelativePath;
-			 
+												 replaceResultItem.FileRelativePath;
 
 				ShowStats(stats, true);
 			}
 			else
 			{
-				HideResultPanel();
+				/* Show Result Panel even if no files found */
+				/* HideResultPanel(); */
 
-				txtNoMatches.Visible = true;
+				/* txtNoMatches.Visible = true; */
 
-				HideStats();
+				/* Show Stats even if no files found */
+				/* HideStats(); */
+
+				ShowStats(stats, true);
 			}
-
 
 			//When last file - enable buttons back
 			if (status == Status.Completed || status == Status.Cancelled)
@@ -585,7 +660,7 @@ namespace FindAndReplace.App
 			else
 			{
 				var replaceResultCallback = new SetReplaceResultCallback(ShowReplaceResult);
-				this.Invoke(replaceResultCallback, new object[] {e.ResultItem, e.Stats, e.Status});
+				this.Invoke(replaceResultCallback, new object[] { e.ResultItem, e.Stats, e.Status });
 			}
 		}
 
@@ -595,18 +670,19 @@ namespace FindAndReplace.App
 				return;
 
 			ShowCommandLinePanel();
-			lblStats.Text = "";
+			/* Show Stats even if button to generate command line is pressed */			
+			/* lblStats.Text = ""; */
 
 			txtCommandLine.Clear();
 
 			var replacer = GetReplacer();
 
 			string s =
-				String.Format(
-					"\"{0}\" {1}",
-					Application.ExecutablePath,
-					replacer.GenCommandLine(chkShowEncoding.Checked)
-				);
+					String.Format(
+							"\"{0}\" {1}",
+							Application.ExecutablePath,
+							replacer.GenCommandLine(chkShowEncoding.Checked)
+					);
 
 			txtCommandLine.Text = s;
 		}
@@ -624,19 +700,6 @@ namespace FindAndReplace.App
 			errorProvider1.SetError(txtDir, "");
 		}
 
-		private void txtFileMask_Validating(object sender, System.ComponentModel.CancelEventArgs e)
-		{
-			var validationResult = ValidationUtils.IsNotEmpty(txtFileMask.Text, "FileMask");
-
-			if (!validationResult.IsSuccess)
-			{
-				errorProvider1.SetError(txtFileMask, validationResult.ErrorMessage);
-				return;
-			}
-
-			errorProvider1.SetError(txtFileMask, "");
-		}
-
 		private void pnlFind_Validating(object sender, System.ComponentModel.CancelEventArgs e)
 		{
 			var validationResult = ValidationUtils.IsNotEmpty(txtFind.Text, "Find");
@@ -647,7 +710,6 @@ namespace FindAndReplace.App
 				return;
 			}
 
-			
 			if (chkIsRegEx.Checked)
 			{
 				validationResult = ValidationUtils.IsValidRegExp(txtFind.Text, "Find");
@@ -707,7 +769,8 @@ namespace FindAndReplace.App
 			var matchesPreviewText = gvResults.Rows[e.RowIndex].Cells[matchedPreviewColIndex].Value.ToString();
 
 			txtMatchesPreview.SelectionLength = 0;
-			txtMatchesPreview.Clear();
+
+			InitializeTxtMatchesPreview();
 
 			txtMatchesPreview.Text = matchesPreviewText;
 
@@ -715,13 +778,13 @@ namespace FindAndReplace.App
 
 			//Use _lastOperation form data since user may change it before clicking on preview
 			var findText = _lastOperationFormData.IsFindOnly
-				               ? _lastOperationFormData.FindText
-				               : _lastOperationFormData.ReplaceText;
+												 ? _lastOperationFormData.FindText
+												 : _lastOperationFormData.ReplaceText;
 			findText = findText.Replace("\r\n", "\n");
 
 			findText = ((_lastOperationFormData.IsRegEx || _lastOperationFormData.UseEscapeChars) && _lastOperationFormData.IsFindOnly) ? findText : Regex.Escape(findText);
 			var mathches = Regex.Matches(txtMatchesPreview.Text, findText,
-			                             Utils.GetRegExOptions(_lastOperationFormData.IsCaseSensitive));
+																	 Utils.GetRegExOptions(_lastOperationFormData.IsCaseSensitive));
 
 			int count = 0;
 			int maxCount = 1000;
@@ -749,14 +812,18 @@ namespace FindAndReplace.App
 		{
 			var separator = Environment.NewLine;
 
-			var lines = content.Split(new string[] {separator}, StringSplitOptions.None);
+			/* Change separator from "\r\n" to "\n" for Unix files, otherwise Preview not working correctly */
+			if (!content.Contains("\r\n"))
+				separator = "\n";
+
+			var lines = content.Split(new string[] { separator }, StringSplitOptions.None);
 
 			var stringBuilder = new StringBuilder();
 
 			rowNumbers = rowNumbers.Distinct().OrderBy(r => r).ToList();
 			var prevLineIndex = 0;
 			string lineSeparator =
-				("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
+					("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
 
 			foreach (var rowNumber in rowNumbers)
 			{
@@ -780,10 +847,18 @@ namespace FindAndReplace.App
 			cmbEncoding.Items.AddRange(encodings.ToArray());
 
 			cmbEncoding.SelectedIndex = 0;
-			
+
 			InitWithRegistryData();
 
-		    txtDir.Focus();
+			/* Initialize Stats table rather than just show text "Stats" */
+			ShowStats(new Stats());
+
+			txtDir.Focus();
+
+			/* To enable e.g. Total Commander to call this program with a search path */
+			var commandLineArgs = Environment.GetCommandLineArgs();
+			if (commandLineArgs.Length > 1)
+				txtDir.Text = string.Join(" ", commandLineArgs, 1, commandLineArgs.Length - 1);
 		}
 
 		//from http://stackoverflow.com/questions/334630/c-open-folder-and-select-the-file
@@ -866,7 +941,7 @@ namespace FindAndReplace.App
 				sb.AppendLine("Time:");
 				sb.AppendLine("- Passed: " + Utils.FormatTimeSpan(stats.Time.Passed));
 
-				if (passedSeconds >= 3 && (int) remainingSeconds != 0)
+				if (passedSeconds >= 3 && (int)remainingSeconds != 0)
 				{
 					sb.AppendLine("- Remaining: " + Utils.FormatTimeSpan(stats.Time.Remaining) + " (estimated)");
 				}
@@ -875,12 +950,10 @@ namespace FindAndReplace.App
 			lblStats.Text = sb.ToString();
 		}
 
-
 		private void HideStats()
 		{
 			lblStats.Text = String.Empty;
 		}
-
 
 		public class GVResultEventArgs : EventArgs
 		{
@@ -904,18 +977,18 @@ namespace FindAndReplace.App
 
 			data.LoadSetting();
 
-		    if (data.IsFirstTime)
-		    {
-                data.IsFirstTime = false;
-                return;
-		    }
+			if (data.IsFirstTime)
+			{
+				data.IsFirstTime = false;
+				return;
+			}
 
 			txtDir.Text = data.Dir;
 			chkIncludeSubDirectories.Checked = data.IncludeSubDirectories;
 			txtFileMask.Text = data.FileMask;
-            txtExcludeFileMask.Text = data.ExcludeFileMask;
-		    txtExcludeDir.Text = data.ExcludeDir;
-            txtFind.Text = data.FindText;
+			txtExcludeFileMask.Text = data.ExcludeFileMask;
+			txtExcludeDir.Text = data.ExcludeDir;
+			txtFind.Text = data.FindText;
 			chkIsCaseSensitive.Checked = data.IsCaseSensitive;
 			chkIsRegEx.Checked = data.IsRegEx;
 			chkSkipBinaryFileDetection.Checked = data.SkipBinaryFileDetection;
@@ -923,9 +996,9 @@ namespace FindAndReplace.App
 			chkShowEncoding.Checked = data.ShowEncoding;
 			txtReplace.Text = data.ReplaceText;
 			chkUseEscapeChars.Checked = data.UseEscapeChars;
-		    chkKeepModifiedDate.Checked = data.IsKeepModifiedDate;
+			chkKeepModifiedDate.Checked = data.IsKeepModifiedDate;
 
-            if (!string.IsNullOrEmpty(data.Encoding))
+			if (!string.IsNullOrEmpty(data.Encoding))
 				cmbEncoding.SelectedIndex = cmbEncoding.Items.IndexOf(data.Encoding);
 		}
 
@@ -982,7 +1055,7 @@ namespace FindAndReplace.App
 
 			result.Add("Auto Detect");
 
-			foreach (EncodingInfo ei in Encoding.GetEncodings().OrderBy(ei=>ei.Name))
+			foreach (EncodingInfo ei in Encoding.GetEncodings().OrderBy(ei => ei.Name))
 			{
 				//Encoding e = ei.GetEncoding();
 
@@ -1000,10 +1073,8 @@ namespace FindAndReplace.App
 
 		private void viewOnlineHelpToolStripMenuItem_Click_1(object sender, EventArgs e)
 		{
-			Process.Start("https://findandreplace.codeplex.com/documentation");
+			Process.Start("http://findandreplace.io/overview");
 		}
-
-		
 
 		private Finder GetFinder()
 		{
@@ -1018,9 +1089,9 @@ namespace FindAndReplace.App
 			finder.SkipBinaryFileDetection = chkSkipBinaryFileDetection.Checked;
 			finder.IncludeFilesWithoutMatches = chkIncludeFilesWithoutMatches.Checked;
 			finder.ExcludeFileMask = txtExcludeFileMask.Text;
-		    finder.ExcludeDir = txtExcludeDir.Text;
+			finder.ExcludeDir = txtExcludeDir.Text;
 
-            finder.UseEscapeChars = chkUseEscapeChars.Checked;
+			finder.UseEscapeChars = chkUseEscapeChars.Checked;
 
 			if (cmbEncoding.SelectedIndex > 0)
 				finder.AlwaysUseEncoding = Utils.GetEncodingByName(cmbEncoding.Text);
@@ -1028,13 +1099,10 @@ namespace FindAndReplace.App
 			return finder;
 		}
 
-
-
 		private string CleanRichBoxText(string text)
 		{
 			return text.Replace("\n", Environment.NewLine);
 		}
-
 
 		private Replacer GetReplacer()
 		{
@@ -1045,42 +1113,82 @@ namespace FindAndReplace.App
 
 			replacer.FileMask = txtFileMask.Text;
 			replacer.ExcludeFileMask = txtExcludeFileMask.Text;
-		    replacer.ExcludeDir = txtExcludeDir.Text;
-            replacer.FindText = CleanRichBoxText(txtFind.Text);
+			replacer.ExcludeDir = txtExcludeDir.Text;
+			replacer.FindText = CleanRichBoxText(txtFind.Text);
 			replacer.IsCaseSensitive = chkIsCaseSensitive.Checked;
 			replacer.FindTextHasRegEx = chkIsRegEx.Checked;
 			replacer.SkipBinaryFileDetection = chkSkipBinaryFileDetection.Checked;
 			replacer.IncludeFilesWithoutMatches = chkIncludeFilesWithoutMatches.Checked;
-			replacer.ReplaceText =  CleanRichBoxText(txtReplace.Text);
+			replacer.ReplaceText = CleanRichBoxText(txtReplace.Text);
 			replacer.UseEscapeChars = chkUseEscapeChars.Checked;
-		    replacer.IsKeepModifiedDate = chkKeepModifiedDate.Checked;
+			replacer.IsKeepModifiedDate = chkKeepModifiedDate.Checked;
 
-
-            if (cmbEncoding.SelectedIndex > 0)
+			if (cmbEncoding.SelectedIndex > 0)
 				replacer.AlwaysUseEncoding = Utils.GetEncodingByName(cmbEncoding.Text);
 
 			return replacer;
 		}
 
-        private void chkIncludeSubDirectories_CheckedChanged(object sender, EventArgs e)
-        {
-            txtExcludeDir.Enabled = chkIncludeSubDirectories.Checked;
-        }
+		private void chkIncludeSubDirectories_CheckedChanged(object sender, EventArgs e)
+		{
+			txtExcludeDir.Enabled = chkIncludeSubDirectories.Checked;
+		}
 
-        private void pictureBox1_Click(object sender, EventArgs e)
-        {
-            Process.Start("http://www.zzzprojects.com/");
-        }
+		private void pictureBox1_Click(object sender, EventArgs e)
+		{
+			Process.Start("http://www.zzzprojects.com/");
+		}
 
-        private void linkLabel1_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-        {
-            Process.Start("http://www.zzzprojects.com/");
-        }
+		private void linkLabel1_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+		{
+			Process.Start("http://www.zzzprojects.com/");
+		}
 
-        private void pictureBox2_Click(object sender, EventArgs e)
-        {
-            Process.Start("http://www.zzzprojects.com/contribute");
-        }
-    }
+		private void pictureBox2_Click(object sender, EventArgs e)
+		{
+			Process.Start("http://www.zzzprojects.com/contribute");
+		}
+
+		private void Dir_DragDrop(object sender, DragEventArgs e)
+		{
+			string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+			foreach (string file in files) txtDir.Text = file;
+			/* If a file rather than a directory is dragged and dropped, use file name as file mask */
+			if (File.Exists(txtDir.Text))
+			{
+				txtFileMask.Text = Path.GetFileName(txtDir.Text);
+				txtDir.Text = Path.GetDirectoryName(txtDir.Text);
+			}
+		}
+
+		private void Dir_DragOver(object sender, DragEventArgs e)
+		{
+			if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy;
+		}
+
+		private void txtFileMask_TextChanged(object sender, EventArgs e)
+		{
+			if (((TextBox)sender).Text.Trim() == "")
+			{
+				((TextBox)sender).Text = "*.*";
+			}
+		}
+
+		private void SelectTextOnTabChange(object sender, EventArgs e)
+		{
+			if (MouseButtons == MouseButtons.None)
+			{
+				if (sender is TextBox)
+				{
+						((TextBox)sender).SelectionStart = 0;
+						((TextBox)sender).SelectionLength = ((TextBox)sender).Text.Length;
+				}
+				if (sender is RichTextBox)
+				{				
+						((RichTextBox)sender).SelectionStart = 0;
+						((RichTextBox)sender).SelectionLength = ((RichTextBox)sender).Text.Length;
+				}
+			}
+		}
+	}
 }
- 
